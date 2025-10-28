@@ -1,0 +1,112 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, from_json, avg, max as spark_max, lit
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+from kafka import KafkaProducer
+import json
+import time
+import threading
+
+# Inicializa la sesión Spark una vez
+spark = SparkSession.builder.appName('Tarea3app').getOrCreate()
+
+# Función para procesamiento batch, leyendo desde HDFS
+def batch_processing():
+    print("\n=== PROCESAMIENTO BATCH ===")
+    file_path = 'hdfs://localhost:9000/Tarea3app/y399-rzwf.csv'  # Cambia ruta si hace falta
+    df = spark.read.format('csv').option('header', 'true').option('inferSchema', 'true').load(file_path)
+
+    print("Muestra de datos originales:")
+    df.show(5)
+
+    df_clean = df.na.drop()
+    if 'edad_a_os' in df_clean.columns:
+        df_clean = df_clean.withColumn("edad_a_os", col("edad_a_os").cast("integer"))
+
+    print("Estadísticas descriptivas:")
+    df_clean.describe().show()
+
+    output_path = "output/colombian_population_processed"
+    df_clean.write.mode("overwrite").parquet(output_path)
+    print(f"Datos guardados en {output_path}")
+
+# código de kafka_data_generator y streaming_processing
+def kafka_data_generator():
+    producer = KafkaProducer(bootstrap_servers='localhost:9092',
+                             value_serializer=lambda v: json.dumps(v).encode('utf-8'))
+    genders = ["M", "F"]
+    print("Generando datos Kafka...")
+    for i in range(50):
+        data = {
+            "id": str(i),
+            "Edad": i % 80 + 1,
+            "Genero": genders[i % 2]
+        }
+        producer.send('colombian_population_topic', data)
+        print(f"Enviado: {data}")
+        time.sleep(1)
+    producer.flush()
+    print("Generación de datos finalizada.")
+
+def streaming_processing():
+    print("\n=== PROCESAMIENTO STREAMING ===")
+    schema = StructType([
+        StructField("id", StringType()),
+        StructField("Edad", IntegerType()),
+        StructField("Genero", StringType())
+    ])
+
+    df_stream = spark.readStream.format("kafka") \
+        .option("kafka.bootstrap.servers", "localhost:9092") \
+        .option("subscribe", "colombian_population_topic") \
+        .option("startingOffsets", "earliest") \
+        .load()
+
+    df_values = df_stream.selectExpr("CAST(value AS STRING) as json_value") \
+        .select(from_json(col("json_value"), schema).alias("data")) \
+        .select("data.*")
+
+    count_by_gender = df_values.groupBy("Genero").count()
+    avg_age = df_values.select(avg("Edad").alias("PromedioEdad"))
+    max_age = df_values.select(spark_max("Edad").alias("EdadMaxima"))
+
+    count_stream = count_by_gender.withColumn("tipo", lit("Conteo"))
+    avg_stream = avg_age.withColumn("Genero", lit("Todos")).withColumn("tipo", lit("Promedio"))
+    max_stream = max_age.withColumn("Genero", lit("Todos")).withColumn("tipo", lit("Maximo"))
+
+    union_stream = count_stream.select("Genero", "count", "tipo") \
+        .union(avg_stream.select(col("Genero"), col("PromedioEdad").alias("count"), col("tipo"))) \
+        .union(max_stream.select(col("Genero"), col("EdadMaxima").alias("count"), col("tipo")))
+
+    query = union_stream.writeStream.outputMode("complete").format("console").start()
+    query.awaitTermination(30)
+    query.stop()
+    print("Procesamiento streaming finalizado.")
+
+# Menú para seleccionar opción
+def main():
+    while True:
+        print("\n--- MENÚ ---")
+        print("1. Procesamiento batch")
+        print("2. Procesamiento streaming (Kafka)")
+        print("3. Generar datos simulados en Kafka")
+        print("4. Salir")
+        option = input("Seleccione una opción: ").strip()
+
+        if option == "1":
+            batch_processing()
+        elif option == "2":
+            streaming_processing()
+        elif option == "3":
+            thread = threading.Thread(target=kafka_data_generator)
+            thread.start()
+            thread.join()
+        elif option == "4":
+            print("Finalizando...")
+            break
+        else:
+            print("Opción inválida, intente nuevamente.")
+
+    spark.stop()
+
+if __name__ == "__main__":
+    main()
