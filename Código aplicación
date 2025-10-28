@@ -14,7 +14,7 @@ spark = SparkSession.builder.appName('Tarea3app').getOrCreate()
 # Función para procesamiento batch, leyendo desde HDFS
 def batch_processing():
     print("\n=== PROCESAMIENTO BATCH ===")
-    file_path = 'hdfs://localhost:9000/Tarea3app/y399-rzwf.csv'  # Cambia ruta si hace falta
+    file_path = 'hdfs://localhost:9000/Tarea3app/y399-rzwf.csv'  
     df = spark.read.format('csv').option('header', 'true').option('inferSchema', 'true').load(file_path)
 
     print("Muestra de datos originales:")
