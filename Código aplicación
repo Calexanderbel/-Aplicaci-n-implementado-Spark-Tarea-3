@@ -1,3 +1,5 @@
+# -Aplicaci-n-implementado-Spark-Tarea-3
+Código para una aplicación  implementado Spark (utilizando Python) que realicen las  siguientes tareas:  Procesamiento en batch y Procesamiento en tiempo real (Spark Streaming;  Kafka).
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, avg, max as spark_max, lit
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
